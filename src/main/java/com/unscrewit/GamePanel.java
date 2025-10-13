@@ -27,7 +27,7 @@ public class GamePanel extends JPanel {
         }
         g.setColor(new Color(0, 0, 0, 60));
         g.setFont(g.getFont().deriveFont(Font.BOLD, 18f));
-        g.drawString("Unscrew It! – Stage 1 · Step A", 16, 28);
+        g.drawString("Unscrew It! – Stage 1 · Step B2", 16, 28);
     }
 }
 

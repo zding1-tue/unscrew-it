@@ -16,7 +16,7 @@ public class GameFrame extends JFrame {
      * 该窗口在程序启动时由 {@link Main} 创建。
      */
     public GameFrame() {
-        super("Unscrew It! – Stage 1 · Step A");
+        super("Unscrew It! – Stage 1 · Step B2");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
         setMinimumSize(new Dimension(900, 600));
