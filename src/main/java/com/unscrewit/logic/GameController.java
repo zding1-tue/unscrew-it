@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * 游戏控制器：处理点击事件并推进核心游戏流程.
- * <p>流程包括命中检测、遮挡判定、目标与缓冲区流转、螺丝移除与胜负检查.</p>
+ * <p>流程包括命中检测、遮挡判定、目标与缓冲区流转、自动转运、螺丝移除与胜负检查.</p>
  */
 public final class GameController {
 
@@ -58,6 +58,7 @@ public final class GameController {
             return;
         }
 
+        // 1) 先尝试把本次点击的螺丝放入目标，否则入缓冲.
         TargetColor color = ColorMapping.toTargetColor(s.color);
         boolean placed = state.targets().tryPlace(color);
         if (!placed) {
@@ -71,23 +72,16 @@ public final class GameController {
             }
         }
 
+        // 从板面移除该螺丝.
         state.removeScrew(s);
 
-        boolean leftFull = state.targets().leftFull();
-        boolean rightFull = state.targets().rightFull();
-        if (leftFull || rightFull) {
-            TargetColor newLeft = state.targets().leftColor();
-            TargetColor newRight = state.targets().rightColor();
-            if (leftFull) {
-                newLeft = pickNewColorExcluding(state.targets().rightColor());
-            }
-            if (rightFull) {
-                newRight = pickNewColorExcluding(leftFull ? newLeft : state.targets().leftColor());
-            }
-            state.targets().refreshColors(leftFull, newLeft, rightFull, newRight);
-            // 如需“自动转运缓冲区可用颜色”，可在此处追加实现.
-        }
+        // 2) 若有目标满 3，刷新该目标颜色.
+        refreshTargetsIfNeeded();
 
+        // 3) 自动转运：从缓冲区尽量把可匹配颜色转入目标.
+        drainBufferToTargets();
+
+        // 4) 胜负判定：所有螺丝清空且缓冲区为空 → 胜利.
         if (state.allCleared() && state.buffer().isEmpty()) {
             if (onWin != null) {
                 onWin.run();
@@ -113,6 +107,56 @@ public final class GameController {
             }
         }
         return null;
+    }
+
+    /**
+     * 自动转运：尝试将缓冲区中能够匹配当前目标颜色的螺丝依次送入目标槽.
+     * <p>算法：按队列顺序逐个弹出；若能放入目标则消耗之并继续；否则放回队尾。若一整轮无任何放入，则终止。</p>
+     */
+    private void drainBufferToTargets() {
+        int guard = state.buffer().size() + 2;
+        while (guard-- > 0) {
+            boolean madeProgress = false;
+            int n = state.buffer().size();
+            for (int i = 0; i < n; i++) {
+                TargetColor c = state.buffer().pop();
+                if (c == null) {
+                    continue;
+                }
+                if (state.targets().tryPlace(c)) {
+                    madeProgress = true;
+                    refreshTargetsIfNeeded();
+                } else {
+                    try {
+                        state.buffer().push(c);
+                    } catch (BufferOverflowException ignore) {
+                        // 不会发生：我们刚从缓冲区弹出了该元素.
+                    }
+                }
+            }
+            if (!madeProgress) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * 检查并在需要时刷新左右目标颜色（满三则刷新为新色）.
+     */
+    private void refreshTargetsIfNeeded() {
+        boolean leftFull = state.targets().leftFull();
+        boolean rightFull = state.targets().rightFull();
+        if (leftFull || rightFull) {
+            TargetColor newLeft = state.targets().leftColor();
+            TargetColor newRight = state.targets().rightColor();
+            if (leftFull) {
+                newLeft = pickNewColorExcluding(state.targets().rightColor());
+            }
+            if (rightFull) {
+                newRight = pickNewColorExcluding(leftFull ? newLeft : state.targets().leftColor());
+            }
+            state.targets().refreshColors(leftFull, newLeft, rightFull, newRight);
+        }
     }
 
     /**
