@@ -23,7 +23,7 @@ public class GameFrame extends JFrame {
      * 创建游戏主窗口并设置基础属性.
      */
     public GameFrame() {
-        super("Unscrew It! – Stage 1 · Step B3");
+        super("Unscrew It! – Stage 1 · Step B5");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
         setMinimumSize(new Dimension(900, 600));
