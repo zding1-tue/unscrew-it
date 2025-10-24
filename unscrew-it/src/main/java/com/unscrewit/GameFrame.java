@@ -9,25 +9,37 @@ import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 
 /**
- * 顶层窗口外壳：承载画布并在启动时初始化关卡与控制器.
+ * Top-level game window for Unscrew It.
+ *
+ * <p>Creates and lays out the main canvas and initializes the level state and
+ * controller when the frame is shown.</p>
+ *
+ * <p>Responsibilities:
+ * <ul>
+ *   <li>Configure the JFrame (title, size, close behavior, layout).</li>
+ *   <li>Host the {@link GamePanel} where rendering and input occur.</li>
+ *   <li>Create the {@link LevelState} and wire it to the {@link GameController}.</li>
+ *   <li>Provide user feedback dialogs for win/lose events.</li>
+ * </ul>
+ * </p>
  */
 public class GameFrame extends JFrame {
 
-    /** 游戏画布. */
+    /** The main drawing and input panel. */
     private final GamePanel gamePanel;
 
-    /** 关卡状态. */
+    /** Mutable snapshot of the current level (board, buffer, history, etc.). */
     private LevelState levelState;
 
     /**
-     * 创建游戏主窗口并设置基础属性.
+     * Constructs the game window and sets basic properties.
      */
     public GameFrame() {
         super("Unscrew It!");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
         setMinimumSize(new Dimension(900, 600));
-        setLocationRelativeTo(null);
+        setLocationRelativeTo(null); // Center on screen.
 
         this.gamePanel = new GamePanel();
         add(gamePanel, BorderLayout.CENTER);
@@ -36,16 +48,19 @@ public class GameFrame extends JFrame {
     }
 
     /**
-     * 获取画布组件.
+     * Returns the main canvas component.
      *
-     * @return 画布组件.
+     * @return the {@link GamePanel}
      */
     public GamePanel getGamePanel() {
         return gamePanel;
     }
 
     /**
-     * 初始化关卡与控制器并完成接线.
+     * Initializes the level state and connects it with the controller and UI.
+     *
+     * <p>Width/height fall back to a sane minimum on first show, then a controller
+     * is created with win/fail callbacks that display message dialogs on the EDT.</p>
      */
     private void initLevelAndController() {
         int w = Math.max(getWidth(), 900);
@@ -53,13 +68,23 @@ public class GameFrame extends JFrame {
         this.levelState = new LevelState(w, h);
         gamePanel.setLevelState(levelState);
 
+        // Define UI feedback callbacks (always run dialog creation on the EDT).
         Runnable onWin = () -> SwingUtilities.invokeLater(() ->
-            JOptionPane.showMessageDialog(this, "You win!", "Unscrew It!", JOptionPane.INFORMATION_MESSAGE)
+            JOptionPane.showMessageDialog(
+                this, 
+                "You win!", 
+                "Unscrew It!", 
+                JOptionPane.INFORMATION_MESSAGE)
         );
         Runnable onFail = () -> SwingUtilities.invokeLater(() ->
-            JOptionPane.showMessageDialog(this, "Buffer overflow – You lose.", "Unscrew It!", JOptionPane.ERROR_MESSAGE)
+            JOptionPane.showMessageDialog(
+                this, 
+                "Buffer overflow – You lose.", 
+                "Unscrew It!", 
+                JOptionPane.ERROR_MESSAGE)
         );
 
+        // Create controller and wire it to the panel.
         GameController controller = new GameController(levelState, onWin, onFail);
         gamePanel.setController(controller);
     }

@@ -1,6 +1,5 @@
 package com.unscrewit;
 
-import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Composite;
@@ -13,65 +12,57 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * 表示一块承载若干螺丝的板子, 负责自身可见性命中与渲染逻辑.
- * 支持在被清空后淡出并从交互与渲染中移除.
+ * Represents a single board that holds multiple screws.
+ * 
+ * <p>
+ * Each board can fade out (disappear) when cleared, and supports visibility checks
+ * and rendering logic for screws. Boards are stacked in depth order during gameplay.
+ * </p>
  */
 public class Board {
 
-    /** 默认静态填充透明度(0~1). */
-    private static final float BASE_ALPHA = 0.78f;
-
-    /** 清空后淡出时长(毫秒). */
-    private static final int FADE_OUT_MS = 250;
-
-    /** 可见性判定采样相对偏移像素. */
+    /** Pixel offset used when sampling screw visibility. */
     private static final int VIS_SAMPLE_OFFSET = 8;
 
-    /** 可见性阈值: 被遮挡比例小于该值则视为可见. */
+    /** Minimum visible ratio threshold (below this means fully hidden). */
     private static final double VISIBLE_THRESHOLD = 0.5;
 
-    /** 板体矩形区域(为兼容现有代码保持 public). */
+    /** Rectangle bounds of the board (public for convenience). */
     public final Rectangle rect;
 
-    /** 板上的螺丝列表(为兼容现有代码保持 public). */
+    /** List of screws on this board (public for convenience). */
     public final List<Screw> screws = new ArrayList<>();
 
-    /** 当前是否处于淡出移除过程. */
+    /** Whether this board is currently in the fade-removal process. */
     private boolean removing = false;
 
-    /** 是否已完全隐藏(淡出完成). */
+    /** Whether the board has completely faded out (invisible). */
     private boolean hidden = false;
 
-    /** 当前透明度, 0~1. */
-    private float alpha = BASE_ALPHA;
-
-    /** 开始淡出的时间戳(纳秒), 未开始为 -1. */
-    private long fadeStartNano = -1L;
-
     /**
-     * 使用给定矩形创建板子实例.
+     * Constructs a new {@code Board} instance with a fixed rectangle region.
      *
-     * @param r 板体矩形区域.
+     * @param r the rectangular bounds of this board
      */
     public Board(final Rectangle r) {
         this.rect = r;
     }
 
     /**
-     * 生成一个随机板子(2×3 或 2×4 布局, 先放置位置, 颜色稍后统一分配).
+     * Creates a randomized board (2×3 or 2×4 layout) and distributes screws evenly.
      *
-     * @param idx 序号.
-     * @param w 画布宽度.
-     * @param h 画布高度.
-     * @param rand 随机源.
-     * @return 随机生成的板子.
+     * @param idx the board index
+     * @param w canvas width
+     * @param h canvas height
+     * @param rand random generator
+     * @return a newly created random {@code Board}
      */
     public static Board randomBoard(final int idx, final int w, final int h, final Random rand) {
         final int topH = h / 4;
         final int midH = h / 8;
         final int playTop = topH + midH;
-        final int slotH = 48; // 与 GamePanel.drawBuffer 一致的高度常量。
-        final int bufferMargin = 28; // 与 GamePanel.drawBuffer 中的底部边距一致。
+        final int slotH = 48;
+        final int bufferMargin = 28;
         final int yBufferTop = h - slotH - bufferMargin;
         final int playHeight = Math.max(1, yBufferTop - playTop - 20);
 
@@ -84,24 +75,25 @@ public class Board {
         final Board b = new Board(new Rectangle(x, y, bw, bh));
 
         final int rows = 2;
-        final int cols = 3 + rand.nextInt(2); // 3 或 4 列.
+        final int cols = 3 + rand.nextInt(2); // 3 or 4 columns
 
+        // Generate evenly spaced screw positions
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 final int sx = x + 20 + c * (bw - 40) / Math.max(1, cols - 1);
                 final int sy = y + 20 + r * (bh - 40) / Math.max(1, rows - 1);
-                b.screws.add(new Screw(sx, sy, Color.GRAY)); // 颜色稍后统一分配.
+                b.screws.add(new Screw(sx, sy, Color.GRAY)); // color unified later
             }
         }
         return b;
     }
 
     /**
-     * 命中检测: 若点击位置落到可见螺丝上, 则返回该螺丝.
+     * Performs hit detection: returns the screw at the clicked point if visible.
      *
-     * @param p 点击位置.
-     * @param above 在该板之上的板列表(用于遮挡判定).
-     * @return 被命中的可见螺丝, 未命中返回 null.
+     * @param p click position
+     * @param above list of boards above this one (for occlusion)
+     * @return the clicked screw, or {@code null} if none
      */
     public Screw getClickedScrew(final Point p, final List<Board> above) {
         if (hidden) {
@@ -116,11 +108,13 @@ public class Board {
     }
 
     /**
-     * 判断一颗螺丝是否可见(被上层板遮挡比例小于阈值). 采用九点采样近似判断.
+     * Determines whether a screw is visible (not occluded by boards above it).
+     * 
+     * <p>Uses sample-based detection with 9 surrounding points.</p>
      *
-     * @param s 待测螺丝.
-     * @param above 在该板之上的板列表.
-     * @return 是否可见.
+     * @param s the screw to test
+     * @param above list of boards above this one
+     * @return {@code true} if the screw is visible; {@code false} otherwise
      */
     public boolean isScrewVisible(final Screw s, final List<Board> above) {
         final int o = VIS_SAMPLE_OFFSET;
@@ -150,63 +144,62 @@ public class Board {
     }
 
     /**
-     * 将一颗螺丝从本板移除.
+     * Removes the given screw from this board.
      *
-     * @param s 螺丝.
+     * @param s the screw to remove
      */
     public void removeScrew(final Screw s) {
         screws.remove(s);
     }
 
     /**
-     * 当板上螺丝全部被移除时触发淡出流程.
+     * Starts the fade-out process when all screws are removed.
      */
     public void startRemoving() {
         if (!removing && !hidden) {
             removing = true;
-            fadeStartNano = System.nanoTime();
         }
     }
 
     /**
-     * 返回是否已无螺丝.
+     * Returns whether this board has no screws remaining.
      *
-     * @return 是否空板.
+     * @return {@code true} if the board is empty
      */
     public boolean allRemoved() {
         return screws.isEmpty();
     }
 
     /**
-     * 返回是否已完全隐藏.
+     * Returns whether this board is completely hidden.
      *
-     * @return 是否隐藏.
+     * @return {@code true} if hidden
      */
     public boolean isHidden() {
         return hidden;
     }
 
     /**
-     * 绘制板子与其螺丝, 需要传入上方板列表以保证与可见性判定一致.
+     * Draws the board and its screws.
+     * 
+     * <p>Requires the list of boards above to ensure visibility consistency.</p>
      *
-     * @param g 图形环境.
-     * @param above 在该板之上的板列表.
+     * @param g the graphics context
+     * @param above list of boards above this one
      */
     public void draw(final Graphics2D g, final List<Board> above) {
         if (hidden) {
             return;
         }
 
-        // 旧版逻辑：不使用淡出动画，直接绘制。
+        // --- Draw board body ---
         Composite old = g.getComposite();
-
-        // 板体.
         g.setColor(new Color(205, 211, 217));
         g.fill(rect);
         g.setColor(new Color(90, 96, 102));
         g.draw(rect);
 
-        // 螺丝.
+        // --- Draw screws ---
         for (Screw s : screws) {
             boolean vis = isScrewVisible(s, above);
             if (vis) {
@@ -217,6 +210,7 @@ public class Board {
                 g.drawOval(s.x - r / 2, s.y - r / 2, r, r);
                 g.setStroke(new BasicStroke(1f));
             } else {
+                // partially covered screws drawn darker
                 int size = Screw.size();
                 int x = s.x - size / 2;
                 int y = s.y - size / 2;
@@ -229,38 +223,19 @@ public class Board {
             }
         }
 
+        // Display screw count at top-left corner
         g.setComposite(old);
-
-        // 左上角显示剩余颗数.
         g.setColor(Color.BLACK);
         g.drawString(String.valueOf(screws.size()), rect.x + 4, rect.y + 14);
     }
 
     /**
-     * 简化重载: 当无需遮挡信息时调用.
+     * Simplified draw version used when no occlusion info is needed.
      *
-     * @param g 图形环境.
+     * @param g the graphics context
      */
     public void draw(final Graphics2D g) {
         draw(g, Collections.emptyList());
     }
 
-    /**
-     * 更新淡出进度并在结束时标记为隐藏.
-     */
-    private void updateFadeProgress() {
-        if (!removing) {
-            return;
-        }
-        if (fadeStartNano < 0L) {
-            fadeStartNano = System.nanoTime();
-        }
-        long now = System.nanoTime();
-        double ms = (now - fadeStartNano) / 1_000_000.0;
-        double t = Math.min(1.0, ms / FADE_OUT_MS);
-        alpha = (float) ((1.0 - t) * BASE_ALPHA);
-        if (t >= 1.0) {
-            hidden = true;
-        }
-    }
 }

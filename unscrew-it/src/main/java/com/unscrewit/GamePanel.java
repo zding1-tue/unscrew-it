@@ -26,68 +26,91 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
 /**
- * 游戏主画布: 负责关卡生成、交互与 UI 渲染.
- * 本版本实现: 半透明板子、板清空后淡出移除、结束按钮 UI、以及“生成即保证可解”.
+ * Main game canvas responsible for level UI and interaction.
+ *
+ * <p>This implementation renders:
+ * boards with screws, the two target areas at the top, the temporary buffer,
+ * moving-screw animations, and the end-game overlay. It also owns the game
+ * state used by the UI (e.g., selection, animation timer, and pools of
+ * pieces/modules) and drives interaction through mouse clicks.</p>
+ *
+ * <p>High-level flow:
+ * <ol>
+ *   <li>{@code addNotify()} → lazy initialization on the EDT.</li>
+ *   <li>{@code paintComponent(...)} → draw background, targets, buffer,
+ *       boards, moving screws, and end overlay.</li>
+ *   <li>Mouse click → {@code handleClick(...)} → pick a visible screw and
+ *       {@code moveScrew(...)} to a target or to the buffer, with animation.</li>
+ * </ol>
+ * </p>
  */
 public class GamePanel extends JPanel {
 
-    /** 目标槽位个数. */
+    /** 
+     * Number of slots in each target area.
+     * Each target can hold up to this many screws.
+     */
     private static final int TARGET_SLOTS = 3;
 
-    /** 缓冲区容量. */
+    /** 
+     * Capacity of the temporary buffer area below the targets.
+     * If the buffer is full, the player cannot store more screws there.
+     */
     private static final int BUFFER_SIZE = 4;
 
-    /** 板子数量. */
+    /** Number of boards to generate for a level. */
     private static final int BOARD_COUNT = 7;
 
-    /** 标题文本. */
+    /** Title text drawn at the top. */
     private static final String TITLE = "Click visible screws to match the target colors";
 
-    /** 螺丝移动动画时长(毫秒). */
+    /** Duration in milliseconds for a screw-moving animation step. */
     private static final int MOVE_DURATION_MS = 260;
 
-    /** 随机源. */
+    /** Random source used for board generation and selections. */
     private final Random rand = new Random();
 
-    /** 板子集合(下标越大层级越高). */
+    /** Collection of boards (back-to-front drawing order). */
     private final List<Board> boards = new ArrayList<>();
 
-    /** 下方缓冲区. */
+    /** Temporary buffer below the targets. */
     private final List<Screw> buffer = new ArrayList<>();
 
-    /** 顶部两组目标颜色. */
+    /** The two current target colors (left / right). */
     private final Color[] targetColors = new Color[2];
 
-    /** 顶部两组目标当前已填数量. */
+    /** Used slots for each target (0..TARGET_SLOTS). */
     private final int[] targetUsed = new int[2];
 
-    /** 剩余“颗数池”. */
+    /** Count of loose screws by color (for win detection). */
     private final Map<Color, Integer> piecesPool = new HashMap<>();
 
-    /** 剩余“模块池”. */
+    /** Count of 3-piece modules by color (for win detection / picking). */
     private final Map<Color, Integer> modulesPool = new HashMap<>();
 
-    /** 正在播放的螺丝移动动画. */
+    /** Currently animating screws. */
     private final List<MovingScrew> movingScrews = new ArrayList<>();
 
-    /** 动画定时器. */
+    /** Swing timer that ticks animations. */
     private final Timer animationTimer;
 
-    /** 是否已经初始化. */
+    /** Whether the panel has been lazily initialized. */
     private boolean inited = false;
 
-    /** 是否处于游戏结束状态. */
+    /** Whether the game is currently over. */
     private boolean gameOver = false;
 
-    /** 是否胜利. */
+    /** Whether the last game was won. */
     private boolean win = false;
 
-    /** 结束时按钮区域. */
+    /** Clickable area for the “New” button on the end overlay. */
     private Rectangle btnNewRect;
+
+    /** Clickable area for the “Quit” button on the end overlay. */
     private Rectangle btnQuitRect;
 
     /**
-     * 构造函数.
+     * Creates the game panel and installs the mouse handler and animation timer.
      */
     public GamePanel() {
         setBackground(new Color(245, 245, 245));
@@ -110,24 +133,28 @@ public class GamePanel extends JPanel {
     }
 
     /**
-     * 兼容旧框架: 接收外部 LevelState, 这里不需要实际使用.
+     * Compatibility hook: accepts a {@code LevelState} from outside.
+     * <p>Not used in this implementation.</p>
      *
-     * @param state 关卡状态对象.
+     * @param state the level state object
      */
     public void setLevelState(final LevelState state) {
         // no-op.
     }
 
     /**
-     * 兼容旧框架: 接收外部控制器, 这里不需要实际使用.
+     * Compatibility hook: accepts the game controller from outside.
+     * <p>Not used in this implementation.</p>
      *
-     * @param controller 控制器对象.
+     * @param controller the controller instance
      */
     public void setController(final GameController controller) {
         // no-op.
     }
 
-    /** 首次挂载后进行一次初始化. */
+    /**
+     * Lazily initializes once after the component is added to the UI hierarchy.
+     */
     @Override
     public void addNotify() {
         super.addNotify();
@@ -140,13 +167,21 @@ public class GamePanel extends JPanel {
         });
     }
 
-    /** 画布建议尺寸. */
+    /**
+     * Preferred size of the canvas.
+     */
     @Override
     public Dimension getPreferredSize() {
         return new Dimension(1050, 700);
     }
 
-    /** 渲染流程. */
+    /**
+     * Rendering pipeline.
+     *
+     * <p>Draws background, title, targets, buffer, boards, moving screws,
+     * and end overlay (if any). The list of boards above the current one is
+     * passed so visibility checks are consistent with the draw order.</p>
+     */
     @Override
     protected void paintComponent(final Graphics g) {
         super.paintComponent(g);
@@ -157,6 +192,7 @@ public class GamePanel extends JPanel {
         int w = getWidth();
         int h = getHeight();
 
+        // Background gradient.
         GradientPaint bg = new GradientPaint(
             0f, 0f, new Color(240, 244, 248),
             0f, h, new Color(226, 233, 240)
@@ -169,42 +205,41 @@ public class GamePanel extends JPanel {
         int topH = h / 4;
         int midH = h / 8;
 
-        // 顶部标题.
+        // Title.
         g2.setColor(new Color(70, 70, 70));
         g2.setFont(getFont().deriveFont(Font.BOLD, 16f));
         g2.drawString(TITLE, 24, 28);
 
-        // 目标与缓冲 UI.
+        // Targets and buffer UI.
         drawTargets(g2, w, topH);
         drawBuffer(g2, w, topH, midH);
 
-        // 板子.
+        // Boards (back-to-front).
         for (int i = 0; i < boards.size(); i++) {
             List<Board> above = boards.subList(i + 1, boards.size());
             boards.get(i).draw(g2, above);
         }
 
+        // Active moving screws.
         drawMovingScrews(g2);
 
-        // 结束遮罩与按钮.
+        // End overlay + buttons.
         if (gameOver) {
             drawEndOverlay(g2, w, h);
         }
     }
 
-    /* ===========================
-       关卡初始化(保证可解)
-       =========================== */
-
     /**
-     * 初始化一局游戏, 实现“生成即保证可解”.
+     * Initializes one round of the game.
      *
-     * @param w 画布宽度.
-     * @param h 画布高度.
+     * @param w canvas width
+     * @param h canvas height
      */
     private void initGame(final int w, final int h) {
         gameOver = false;
         win = false;
+        
+        // Reset collections and counters.
         buffer.clear();
         boards.clear();
         targetUsed[0] = targetUsed[1] = 0;
@@ -215,12 +250,12 @@ public class GamePanel extends JPanel {
             animationTimer.stop();
         }
 
-        // 1) 生成板子与螺丝位置(先不着色).
+        // 1) Generate boards and screw positions (no colors yet).
         for (int i = 0; i < BOARD_COUNT; i++) {
             boards.add(Board.randomBoard(i, w, h, rand));
         }
 
-        // 2) 确保总数量为 3 的倍数: 如有需要补 1~2 颗.
+        // 2) Ensure the total number of screws is a multiple of 3.
         int total = 0;
         for (Board b : boards) {
             total += b.screws.size();
@@ -235,11 +270,11 @@ public class GamePanel extends JPanel {
         }
         total += need;
 
-        // 3) 使用逻辑调色板生成“三连模块”并洗牌.
+        // 3) Build the logical color pool in triplets and shuffle it.
         List<TargetColor> logicalPool = Palette.generateTripletShuffled(total);
 
-        // 4) 将逻辑颜色映射为实际 RGB 颜色并发放到每颗螺丝.
-        //    注意: Screw.color 是 final, 不能赋值, 需创建新 Screw 替换.
+        // 4) Map logical colors to actual RGB colors and assign to screws.
+        //    Note: Screw.color is final; create new Screw instances instead.
         Iterator<TargetColor> it = logicalPool.iterator();
         for (Board b : boards) {
             List<Screw> replaced = new ArrayList<>(b.screws.size());
@@ -255,7 +290,7 @@ public class GamePanel extends JPanel {
             b.screws.addAll(replaced);
         }
 
-        // 5) 初始化池: 模块池与颗数池.
+        // 5) Initialize pools: count loose pieces and 3-piece modules.
         Map<Color, Integer> countByColor = new HashMap<>();
         for (Board b : boards) {
             for (Screw s : b.screws) {
@@ -269,7 +304,7 @@ public class GamePanel extends JPanel {
             modulesPool.put(e.getKey(), pieces / 3);
         }
 
-        // 6) 初始目标色: 从模块池>0的颜色中随机选择两种不同颜色.
+        // 6) Initialize target colors: pick two different colors from modules.
         targetColors[0] = pickTargetColor(null);
         targetColors[1] = pickTargetColor(targetColors[0]);
         if (targetColors[0] == null && !countByColor.isEmpty()) {
@@ -280,7 +315,13 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 选择一个目标颜色, 要求模块>0 且尽量不同于 avoid. */
+    /**
+     * Picks a target color from the module pool, avoiding the given color
+     * and preferring colors with available modules.
+     *
+     * @param avoid color to avoid (may be {@code null})
+     * @return a chosen color, or {@code null} if no suitable color exists
+     */
     private Color pickTargetColor(final Color avoid) {
         List<Color> candidates = new ArrayList<>();
         for (Map.Entry<Color, Integer> e : modulesPool.entrySet()) {
@@ -296,11 +337,17 @@ public class GamePanel extends JPanel {
         return candidates.get(rand.nextInt(candidates.size()));
     }
 
-    /* ===========================
-       交互与状态推进
-       =========================== */
+    /* ================================
+     * Interaction and state advance
+     * ================================ */
 
-    /** 处理鼠标点击. */
+    /**
+     * Handles a mouse click.
+     * <p>Searches boards from front to back to find a clicked visible screw,
+     * then attempts to move it.</p>
+     *
+     * @param p the click position
+     */
     private void handleClick(final Point p) {
         for (int i = boards.size() - 1; i >= 0; i--) {
             Board b = boards.get(i);
@@ -313,7 +360,14 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 将一颗螺丝搬运到目标或缓冲. */
+    /**
+     * Moves a screw either to a target slot (if a matching color slot exists)
+     * or into the buffer (if space remains). Losing condition is triggered if
+     * neither is possible.
+     *
+     * @param s    the screw to move
+     * @param from the board holding the screw
+     */
     private void moveScrew(final Screw s, final Board from) {
         Color c = s.color;
         from.removeScrew(s);
@@ -348,7 +402,10 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 自动从缓冲向目标搬运, 直到不能再搬为止. */
+    /**
+     * Automatically transfers screws from the buffer to targets while possible.
+     * <p>Continues until no more moves can be made in a single pass.</p>
+     */
     private void autoTransfer() {
         boolean moved;
         do {
@@ -382,7 +439,11 @@ public class GamePanel extends JPanel {
         checkWin();
     }
 
-    /** 点击或转运后更新板状态并检测胜负. */
+    /**
+     * Called after a click or a transfer to update board state and re-check win.
+     *
+     * @param b the board that was updated
+     */
     private void afterBoardUpdate(final Board b) {
         if (b.allRemoved()) {
             boards.remove(b);
@@ -390,7 +451,10 @@ public class GamePanel extends JPanel {
         checkWin();
     }
 
-    /** 胜利检测. */
+    /**
+     * Checks whether the win condition is met.
+     * <p>Early exits if the buffer is not empty.</p>
+     */
     private void checkWin() {
         if (!buffer.isEmpty()) {
             return;
@@ -408,43 +472,58 @@ public class GamePanel extends JPanel {
         win();
     }
 
-    /** 胜利状态. */
+    /**
+     * Switches to the “win” state and requests a repaint.
+     * Sets {@code gameOver = true} and {@code win = true}.
+     */
     private void win() {
         gameOver = true;
         win = true;
         repaint();
     }
 
-    /** 失败状态. */
+    /**
+     * Switches to the “lose” state and requests a repaint.
+     * Sets {@code gameOver = true} and {@code win = false}.
+     */
     private void lose() {
         gameOver = true;
         win = false;
         repaint();
     }
 
-    /* ===========================
-       绘制: 目标 / 缓冲 / 结束 UI
-       =========================== */
+    /* ============================
+       Rendering Section: 
+       Target / Buffer / End UI
+       ============================ */
 
-    /** 绘制顶部目标条. */
+    /** 
+     * Draws the top target panels, showing target colors and progress.
+     *
+     * @param g2    the graphics context
+     * @param w     the canvas width
+     * @param topH  the top panel height
+     */
     private void drawTargets(final Graphics2D g2, final int w, final int topH) {
+        // Layout parameters
         int pad = 24;
         int cardW = (w - pad * 3) / 2;
         int barH = 44;
         int y = 54;
 
         for (int t = 0; t < 2; t++) {
+            // Card position
             int x = pad + t * (cardW + pad);
             int cardX = x - 10;
             int cardY = y - 18;
             int cardWidth = cardW + 20;
             int cardHeight = barH + 52;
 
-            // 阴影.
+            // Drop shadow
             g2.setColor(new Color(0, 0, 0, 28));
             g2.fillRoundRect(cardX + 4, cardY + 8, cardWidth, cardHeight, 18, 18);
 
-            // 卡片主体.
+            // Card body background
             GradientPaint cardPaint = new GradientPaint(
                 cardX, cardY, new Color(255, 255, 255, 235),
                 cardX, cardY + cardHeight, new Color(244, 248, 252, 235)
@@ -456,12 +535,12 @@ public class GamePanel extends JPanel {
             g2.setColor(new Color(205, 210, 220));
             g2.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 18, 18);
 
-            // 标题.
+            // Title label
             g2.setFont(getFont().deriveFont(Font.BOLD, 13f));
             g2.setColor(new Color(85, 90, 98));
             g2.drawString("TARGET " + (t + 1), cardX + 18, cardY + 26);
 
-            // 彩条区域.
+            // Color bar area
             int barX = x;
             int barY = cardY + 32;
             Color base = targetColors[t] != null ? targetColors[t] : new Color(190, 198, 206);
@@ -477,7 +556,7 @@ public class GamePanel extends JPanel {
             g2.setStroke(new BasicStroke(1.6f));
             g2.drawRoundRect(barX, barY, cardW, barH, 12, 12);
 
-            // 三个槽位圆点.
+            // Slot indicators
             int dotR = 16;
             int gap = (cardW - dotR * TARGET_SLOTS) / (TARGET_SLOTS + 1);
             for (int i = 0; i < TARGET_SLOTS; i++) {
@@ -497,7 +576,7 @@ public class GamePanel extends JPanel {
                 }
             }
 
-            // 状态文本.
+            // Progress text
             String progress = targetUsed[t] + "/" + TARGET_SLOTS + " slots";
             g2.setFont(getFont().deriveFont(12f));
             g2.setColor(new Color(110, 115, 125));
@@ -505,7 +584,14 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 绘制底部缓冲区. */
+    /** 
+     * Draws the lower buffer area (temporary screw slots).
+     *
+     * @param g2    the graphics context
+     * @param w     the panel width
+     * @param topH  top panel height
+     * @param midH  middle section height
+     */
     private void drawBuffer(final Graphics2D g2, final int w, final int topH, final int midH) {
         int pad = 24;
         int slotW = (w - pad * (BUFFER_SIZE + 1)) / BUFFER_SIZE;
@@ -517,7 +603,7 @@ public class GamePanel extends JPanel {
         int cardY = y - 32;
         int cardHeight = slotH + 70;
 
-        // 阴影与卡片.
+        // Drop shadow and card background
         g2.setColor(new Color(0, 0, 0, 24));
         g2.fillRoundRect(cardX + 4, cardY + 8, cardWidth, cardHeight, 20, 20);
         GradientPaint cardPaint = new GradientPaint(
@@ -531,7 +617,7 @@ public class GamePanel extends JPanel {
         g2.setColor(new Color(205, 210, 220));
         g2.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 20, 20);
 
-        // 标题与状态.
+        // Title label
         g2.setFont(getFont().deriveFont(Font.BOLD, 14f));
         g2.setColor(new Color(85, 90, 98));
         g2.drawString("BUFFER BAY", cardX + 20, cardY + 28);
@@ -542,7 +628,7 @@ public class GamePanel extends JPanel {
         int usageWidth = g2.getFontMetrics().stringWidth(usage);
         g2.drawString(usage, cardX + cardWidth - usageWidth - 20, cardY + 28);
 
-        // 缓冲槽位.
+        // Draw each slot
         for (int i = 0; i < BUFFER_SIZE; i++) {
             int x = pad + i * (slotW + pad);
             GradientPaint slotPaint = new GradientPaint(
@@ -576,7 +662,12 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 绘制运动中的螺丝动画. */
+    /**
+     * Draws all screws that are currently moving between slots or targets.
+     * This method is called every frame during animation.
+     *
+     * @param g2 the graphics context
+     */
     private void drawMovingScrews(final Graphics2D g2) {
         if (movingScrews.isEmpty()) {
             return;
@@ -587,6 +678,7 @@ public class GamePanel extends JPanel {
             int radius = size / 2;
             int x = Math.round(ms.currentX) - radius;
             int y = Math.round(ms.currentY) - radius;
+            // Create gradient color for screw appearance
             GradientPaint paint = new GradientPaint(
                 x, y, lightenColor(ms.color, 0.28f),
                 x, y + size, darkenColor(ms.color, 0.24f)
@@ -600,13 +692,19 @@ public class GamePanel extends JPanel {
         g2.setPaint(prev);
     }
 
-    /** 绘制结束遮罩与按钮. */
+    /**
+     * Draws the end-game overlay with result message and action buttons.
+     *
+     * @param g2 the graphics context
+     * @param w  the panel width
+     * @param h  the panel height
+     */
     private void drawEndOverlay(final Graphics2D g2, final int w, final int h) {
-        // 半透明遮罩.
+        // Semi-transparent background
         g2.setColor(new Color(0, 0, 0, 90));
         g2.fillRect(0, 0, w, h);
 
-        // 面板.
+        // Result card background
         int pw = 420;
         int ph = 180;
         int px = (w - pw) / 2;
@@ -616,12 +714,12 @@ public class GamePanel extends JPanel {
         g2.setColor(new Color(70, 70, 70));
         g2.drawRoundRect(px, py, pw, ph, 16, 16);
 
-        // 标题.
+        // Title (win/lose text)
         g2.setFont(getFont().deriveFont(Font.BOLD, 18f));
         g2.setColor(new Color(50, 50, 50));
         g2.drawString(win ? "You Win!" : "Game Over", px + 24, py + 38);
 
-        // 两个按钮.
+        // Two buttons: New Game / Quit
         int bw = 160;
         int bh = 44;
         int gap = 24;
@@ -636,13 +734,21 @@ public class GamePanel extends JPanel {
         drawButton(g2, btnQuitRect, "Quit");
     }
 
-    /** 绘制一个简单按钮. */
+    /**
+     * Draws a single rounded button with a text label.
+     *
+     * @param g2   the graphics context
+     * @param r    the rectangle area of the button
+     * @param text the label displayed on the button
+     */
     private void drawButton(final Graphics2D g2, final Rectangle r, final String text) {
+        // Button background and border
         g2.setColor(new Color(235, 239, 245));
         g2.fillRoundRect(r.x, r.y, r.width, r.height, 10, 10);
         g2.setColor(new Color(90, 96, 102));
         g2.drawRoundRect(r.x, r.y, r.width, r.height, 10, 10);
 
+        // Button label text
         g2.setColor(new Color(40, 40, 40));
         Font f = getFont().deriveFont(Font.BOLD, 14f);
         g2.setFont(f);
@@ -653,7 +759,11 @@ public class GamePanel extends JPanel {
         g2.drawString(text, tx, ty);
     }
 
-    /** 结束状态下处理按钮点击. */
+    /**
+     * Handles mouse click events when the end overlay is shown.
+     *
+     * @param p the mouse click point
+     */
     private void handleEndButtons(final Point p) {
         if (btnNewRect != null && btnNewRect.contains(p)) {
             newGame();
@@ -662,7 +772,10 @@ public class GamePanel extends JPanel {
         }
     }
 
-    /** 重开一局. */
+    /**
+     * Starts a new round of the game.
+     * Reinitializes the board and resets win/loss state.
+     */
     private void newGame() {
         initGame(getWidth(), getHeight());
         inited = true;
@@ -671,11 +784,17 @@ public class GamePanel extends JPanel {
         repaint();
     }
 
-    /* ===========================
-       工具与池操作
-       =========================== */
+    /* ============================
+       Tools and Utility Functions
+       ============================ */
 
-    /** 提亮颜色. */
+    /**
+     * Brightens a given color by the specified ratio.
+     *
+     * @param color the base color
+     * @param ratio how much to lighten (0–1)
+     * @return the lightened color
+     */
     private Color lightenColor(final Color color, final float ratio) {
         Color base = color != null ? color : new Color(200, 205, 212);
         float r = Math.max(0f, Math.min(1f, ratio));
@@ -685,7 +804,13 @@ public class GamePanel extends JPanel {
         return new Color(red, green, blue);
     }
 
-    /** 变暗颜色. */
+    /**
+     * Darkens a given color by the specified ratio.
+     *
+     * @param color the base color
+     * @param ratio how much to darken (0–1)
+     * @return the darkened color
+     */
     private Color darkenColor(final Color color, final float ratio) {
         Color base = color != null ? color : new Color(180, 185, 192);
         float r = Math.max(0f, Math.min(1f, ratio));
@@ -695,7 +820,12 @@ public class GamePanel extends JPanel {
         return new Color(red, green, blue);
     }
 
-    /** 查找可用目标槽位. */
+    /**
+     * Finds a target index that still has available slots for the given color.
+     *
+     * @param color the target color to search for
+     * @return the index of the available target, or -1 if none found
+     */
     private int findAvailableTarget(final Color color) {
         for (int t = 0; t < 2; t++) {
             if (sameColor(color, targetColors[t]) && targetUsed[t] < TARGET_SLOTS) {
@@ -705,7 +835,12 @@ public class GamePanel extends JPanel {
         return -1;
     }
 
-    /** 应用目标槽填充并驱动后续逻辑. */
+    /**
+     * Fills a target slot with the given color and triggers the next action.
+     *
+     * @param targetIndex which target to fill
+     * @param color       the color to fill
+     */
     private void applyTargetFill(final int targetIndex, final Color color) {
         targetUsed[targetIndex]++;
         decPiece(color);
@@ -721,8 +856,20 @@ public class GamePanel extends JPanel {
         checkWin();
     }
 
-    /** 计算目标槽中心位置. */
-    private Point computeTargetSlotCenter(final int targetIndex, final int slotIndex, final int width, final int height) {
+    /**
+     * Computes the center coordinates of a target slot.
+     *
+     * @param targetIndex the index of the target panel (0 or 1)
+     * @param slotIndex   the index of the slot inside that target
+     * @param width       total panel width
+     * @param height      total panel height
+     * @return a Point representing the center position of that slot
+     */
+    private Point computeTargetSlotCenter(
+        final int targetIndex, 
+        final int slotIndex, 
+        final int width, 
+        final int height) {
         int pad = 24;
         int cardW = (width - pad * 3) / 2;
         int barH = 44;
@@ -737,7 +884,14 @@ public class GamePanel extends JPanel {
         return new Point(topLeftX + dotR / 2, topLeftY + dotR / 2);
     }
 
-    /** 计算缓冲槽中心位置. */
+    /**
+     * Computes the center coordinates of a buffer slot.
+     *
+     * @param slotIndex the index of the buffer slot
+     * @param width     total panel width
+     * @param height    total panel height
+     * @return a Point representing the slot center position
+     */
     private Point computeBufferSlotCenter(final int slotIndex, final int width, final int height) {
         int pad = 24;
         int slotW = (width - pad * (BUFFER_SIZE + 1)) / BUFFER_SIZE;
@@ -747,10 +901,21 @@ public class GamePanel extends JPanel {
         return new Point(x + slotW / 2, y + slotH / 2);
     }
 
-    /** 启动一段螺丝移动动画. */
+    /**
+     * Starts an animation for a moving screw traveling from one position to another.
+     * The movement is animated over time and triggers a callback when finished.
+     *
+     * @param color        screw color
+     * @param startX       starting x coordinate
+     * @param startY       starting y coordinate
+     * @param endX         target x coordinate
+     * @param endY         target y coordinate
+     * @param onComplete   action to run when movement ends
+     */
     private void startMovingScrew(final Color color, final float startX, final float startY,
         final float endX, final float endY, final Runnable onComplete) {
-        MovingScrew ms = new MovingScrew(color, startX, startY, endX, endY, MOVE_DURATION_MS, onComplete);
+        MovingScrew ms = new MovingScrew(color, startX, startY, endX, endY, 
+                                         MOVE_DURATION_MS, onComplete);
         movingScrews.add(ms);
         if (!animationTimer.isRunning()) {
             animationTimer.start();
@@ -758,7 +923,10 @@ public class GamePanel extends JPanel {
         repaint();
     }
 
-    /** 动画时钟回调. */
+    /**
+     * Called every animation tick to update all active moving screws.
+     * Removes completed animations and repaints the panel.
+     */
     private void onAnimationTick() {
         if (movingScrews.isEmpty()) {
             animationTimer.stop();
@@ -780,14 +948,26 @@ public class GamePanel extends JPanel {
         repaint();
     }
 
-    /** 缓动函数 (ease-out cubic). */
+    /**
+     * Easing function (ease-out cubic).
+     * Produces a smooth deceleration effect for animation motion.
+     *
+     * @param t normalized time value (0.0–1.0)
+     * @return eased progress value
+     */
     private static double easeOutCubic(final double t) {
         double clamped = Math.max(0.0, Math.min(1.0, t));
         double inv = clamped - 1.0;
         return inv * inv * inv + 1.0;
     }
 
-    /** 颜色相等判定(处理 null). */
+    /**
+     * Compares two colors for equality, safely handling null values.
+     *
+     * @param a first color
+     * @param b second color
+     * @return true if colors are equal (or both null), false otherwise
+     */
     private boolean sameColor(final Color a, final Color b) {
         if (a == b) {
             return true;
@@ -798,18 +978,30 @@ public class GamePanel extends JPanel {
         return a.equals(b);
     }
 
-    /** 颗数池 -1. */
+    /**
+     * Decreases the count of the specified color in the piece pool by 1.
+     *
+     * @param c the color to decrement
+     */
     private void decPiece(final Color c) {
         piecesPool.put(c, Math.max(0, piecesPool.getOrDefault(c, 0) - 1));
     }
 
-    /** 模块池 -1. */
+    /**
+     * Decreases the count of the specified color in the module pool by 1.
+     *
+     * @param c the color to decrement
+     */
     private void decModule(final Color c) {
         int now = Math.max(0, modulesPool.getOrDefault(c, 0) - 1);
         modulesPool.put(c, now);
     }
 
-    /** 定义单颗螺丝的移动动画状态. */
+    /**
+     * Represents a single moving screw animation between two points.
+     * Each screw interpolates its position over time and optionally triggers
+     * a completion callback once the animation ends.
+     */
     private static final class MovingScrew {
         private final Color color;
         private final float startX;
@@ -824,6 +1016,17 @@ public class GamePanel extends JPanel {
         private float currentY;
         private boolean finished;
 
+        /**
+         * Creates a new moving screw animation.
+         *
+         * @param color       screw color
+         * @param startX      starting x coordinate
+         * @param startY      starting y coordinate
+         * @param endX        target x coordinate
+         * @param endY        target y coordinate
+         * @param durationMs  total animation duration in milliseconds
+         * @param onComplete  callback executed when the movement finishes
+         */
         private MovingScrew(final Color color, final float startX, final float startY,
             final float endX, final float endY, final int durationMs, final Runnable onComplete) {
             this.color = color;
@@ -837,6 +1040,11 @@ public class GamePanel extends JPanel {
             update(this.startTime);
         }
 
+        /**
+         * Updates the screw’s position based on the elapsed time.
+         *
+         * @param now the current system time in milliseconds
+         */
         private void update(final long now) {
             double elapsed = (now - startTime) / (double) durationMs;
             double eased = easeOutCubic(elapsed);
@@ -845,10 +1053,18 @@ public class GamePanel extends JPanel {
             finished = elapsed >= 1.0;
         }
 
+        /**
+         * Checks whether this animation has finished.
+         *
+         * @return true if completed, false otherwise
+         */
         private boolean isFinished() {
             return finished;
         }
 
+        /**
+         * Executes the completion callback (if any).
+         */
         private void finish() {
             if (onComplete != null) {
                 onComplete.run();

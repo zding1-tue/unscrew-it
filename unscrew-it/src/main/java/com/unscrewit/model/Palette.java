@@ -18,8 +18,9 @@ import java.util.List;
  */
 public final class Palette {
 
+    /** Private constructor to prevent instantiation. */
     private Palette() {
-        // Utility class.
+        // Utility class; should not be instantiated.
     }
 
     /**
@@ -51,11 +52,13 @@ public final class Palette {
      *         containing triplets of matching colors
      */
     public static List<TargetColor> generateTripletShuffled(int total) {
+        // Round total up to the nearest multiple of 3
         int adjusted = ((total + 2) / 3) * 3;
         List<TargetColor> palette = defaultPalette();
         List<TargetColor> pool = new ArrayList<>(adjusted);
 
         int index = 0;
+        // Fill the pool with repeating triplets of colors
         while (pool.size() < adjusted) {
             TargetColor color = palette.get(index % palette.size());
             pool.add(color);
@@ -64,6 +67,7 @@ public final class Palette {
             index++;
         }
 
+        // Randomize color order for game variety
         Collections.shuffle(pool);
         return pool;
     }

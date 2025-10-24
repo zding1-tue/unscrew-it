@@ -12,79 +12,84 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * 关卡状态：保存当前关卡中的所有游戏要素.
- * <p>包含 7 块板、目标槽与缓冲区.</p>
- * <p>约定：索引越大的板位于越上层.</p>
+ * Level state: holds all runtime data for the current level.
+ *
+ * <p>Includes the boards, target slots, and buffer. Also provides helpers for
+ * querying and updating state during gameplay.</p>
+ *
+ * <p>Coordinate system: screen-space pixel positions from the top-left.</p>
  */
 public final class LevelState {
 
-    /** 当前关卡中包含的所有板. */
+    /** All boards in the current level. Index increases from back to front. */
     private final List<Board> boards = new ArrayList<>(Rules.BOARD_COUNT);
 
-    /** 顶部的两个目标槽. */
+    /** The two target areas at the top of the screen. */
     private final TargetSlots targetSlots;
 
-    /** 缓冲区. */
+    /** Temporary holding buffer for screws. */
     private final Buffer buffer = new Buffer();
 
-    /** 随机数生成器. */
+    /** Pseudorandom generator for shuffles and random choices. */
     private final Random random = new Random();
 
     /**
-     * 使用画布尺寸创建新的关卡状态.
+     * Creates a level state using only the given canvas dimensions.
      *
-     * @param canvasW 画布宽度（像素）.
-     * @param canvasH 画布高度（像素）.
+     * @param canvasW canvas width in pixels
+     * @param canvasH canvas height in pixels
      */
     public LevelState(int canvasW, int canvasH) {
+        // Create random boards back-to-front.
         for (int i = 0; i < Rules.BOARD_COUNT; i++) {
             boards.add(Board.randomBoard(i, canvasW, canvasH, random));
         }
+        // Pick two distinct logical colors for the initial targets.
         List<TargetColor> palette = Palette.defaultPalette();
         Collections.shuffle(palette, random);
         this.targetSlots = new TargetSlots(palette.get(0), palette.get(1));
     }
 
     /**
-     * 获取当前关卡的全部板集合.
+     * Returns all boards in this level.
      *
-     * @return 板的列表，索引越大越上层.
+     * @return the list of boards (back-to-front order)
      */
     public List<Board> boards() {
         return boards;
     }
 
     /**
-     * 获取目标槽对象.
+     * Returns the target slots object.
      *
-     * @return 目标槽.
+     * @return the {@link TargetSlots}
      */
     public TargetSlots targets() {
         return targetSlots;
     }
 
     /**
-     * 获取缓冲区对象.
+     * Returns the buffer.
      *
-     * @return 缓冲区.
+     * @return the {@link Buffer}
      */
     public Buffer buffer() {
         return buffer;
     }
 
     /**
-     * 获取内部使用的随机数生成器.
+     * Returns the internal random generator.
      *
-     * @return 随机数生成器.
+     * @return the {@link Random} instance
      */
     public Random random() {
         return random;
     }
 
     /**
-     * 判断当前是否所有板面都已无螺丝.
+     * Checks whether all boards are cleared of screws.
      *
-     * @return 若所有板无螺丝则为 {@code true}，否则为 {@code false}.
+     * @return {@code true} if every board has no screws; {@code false} otherwise
      */
     public boolean allCleared() {
         for (Board b : boards) {
@@ -96,10 +101,11 @@ public final class LevelState {
     }
 
     /**
-     * 获取位于指定板之上的所有板的矩形边界，用于遮挡计算.
+     * Returns the rectangles of every board located visually above the given holder.
+     * Useful for hit testing when dragging across layers.
      *
-     * @param holder 包含螺丝的板.
-     * @return 位于其上的板的矩形列表.
+     * @param holder the board whose covering boards to compute
+     * @return rectangles of boards above the holder (front-most first)
      */
     public List<Rectangle> coveringRectsFor(Board holder) {
         List<Rectangle> rects = new ArrayList<>();
@@ -107,6 +113,7 @@ public final class LevelState {
         if (idx < 0) {
             return rects;
         }
+        // Collect rectangles from all boards in front of the holder.
         for (int i = boards.size() - 1; i > idx; i--) {
             rects.add(boards.get(i).rect);
         }
@@ -114,10 +121,10 @@ public final class LevelState {
     }
 
     /**
-     * 从关卡中移除一个给定的螺丝.
+     * Removes the given screw from whichever board currently holds it.
      *
-     * @param screw 需要移除的螺丝.
-     * @return 若移除成功则为 {@code true}，否则为 {@code false}.
+     * @param screw the screw to remove
+     * @return {@code true} if the screw was found and removed; {@code false} otherwise
      */
     public boolean removeScrew(Screw screw) {
         for (Board b : boards) {
@@ -129,10 +136,10 @@ public final class LevelState {
     }
 
     /**
-     * 查找指定螺丝所在的板.
+     * Finds the board that currently contains the given screw.
      *
-     * @param screw 目标螺丝.
-     * @return 包含该螺丝的板，若未找到返回 {@code null}.
+     * @param screw the screw to search for
+     * @return the board that contains the screw, or {@code null} if none
      */
     public Board findHolder(Screw screw) {
         for (Board b : boards) {

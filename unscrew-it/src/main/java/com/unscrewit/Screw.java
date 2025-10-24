@@ -5,26 +5,30 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 
 /**
- * 螺丝：有位置与颜色，可检测点击命中并负责绘制自身.
+ * Represents a screw on the board. Each screw has a fixed position,
+ * a color, and can determine whether a point hits it. It also handles
+ * its own drawing.
  */
 public class Screw {
 
-    /** 直径（像素）. */
+    /** Diameter (in pixels). */
     private static final int SIZE = 18;
 
-    /** 螺丝中心坐标. */
+    /** Center x-coordinate of the screw (in pixels). */
     public final int x;
+
+    /** Center y-coordinate of the screw (in pixels). */
     public final int y;
 
-    /** 螺丝颜色.*/
+    /** The color of the screw. */
     public final Color color;
 
     /**
-     * 构造一个螺丝.
+     * Constructs a screw with a specific position and color.
      *
-     * @param x      中心 X 坐标（像素）
-     * @param y      中心 Y 坐标（像素）
-     * @param color  颜色
+     * @param x the x-coordinate of the screw center (in pixels)
+     * @param y the y-coordinate of the screw center (in pixels)
+     * @param color the color of the screw
      */
     public Screw(int x, int y, Color color) {
         this.x = x;
@@ -33,13 +37,14 @@ public class Screw {
     }
 
     /**
-     * 判断点击点是否命中该螺丝（以圆形命中区域为准）.
+     * Determines whether a given point lies within the screw's circular area.
      *
-     * @param p 点击点
-     * @return 是否命中
+     * @param p the point to test
+     * @return {@code true} if the point is inside the screw's hit area;
+     *         {@code false} otherwise
      */
     public boolean contains(Point p) {
-        // 用欧氏距离判断是否在半径内
+        // Compute squared distance from center to the point
         double dx = p.x - x;
         double dy = p.y - y;
         double r = SIZE / 2.0;
@@ -47,9 +52,10 @@ public class Screw {
     }
 
     /**
-     * 绘制该螺丝的外观（实体圆 + 边框）.
+     * Draws the screw on the provided graphics context.
+     * It is rendered as a filled circle with a dark gray outline.
      *
-     * @param g2 图形环境
+     * @param g2 the graphics context
      */
     public void draw(Graphics2D g2) {
         int r = SIZE / 2;
@@ -61,9 +67,9 @@ public class Screw {
     }
 
     /**
-     * 获取当前螺丝的直径（像素）.
+     * Returns the diameter of the screw (in pixels).
      *
-     * @return 直径
+     * @return the screw diameter
      */
     public static int size() {
         return SIZE;

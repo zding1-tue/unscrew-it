@@ -1,7 +1,22 @@
 package com.unscrewit.rules;
 
 /**
- * Centralized game constants according to the agreed rules.
+ * Centralized, immutable game rules and tuning constants.
+ *
+ * <p>This class defines the knobs that control overall gameplay and UI layout.
+ * All fields are {@code public static final} so they can be referenced from
+ * rendering and logic code without instantiating this class.</p>
+ *
+ * <p><b>Notes:</b>
+ * <ul>
+ *   <li>Changing these values affects both logic and drawing. Ensure dependent
+ *       calculations in {@link com.unscrewit.GamePanel}, {@link com.unscrewit.model.TargetSlots},
+ *       {@link com.unscrewit.model.Palette}, and {@link com.unscrewit.rules.Board}
+ *       remain consistent.</li>
+ *   <li>Units are integers unless otherwise documented; angles or ratios are
+ *       expressed as {@code double} in the range {@code [0.0, 1.0]}.</li>
+ * </ul>
+ * </p>
  */
 public final class Rules {
 
@@ -21,6 +36,6 @@ public final class Rules {
     public static final int PALETTE_SIZE = 8;
 
     private Rules() {
-        // Utility class.
+        // Utility class; not meant to be instantiated.
     }
 }

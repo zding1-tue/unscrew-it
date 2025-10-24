@@ -3,11 +3,11 @@ package com.unscrewit.logic;
 import com.unscrewit.Board;
 import com.unscrewit.LevelState;
 import com.unscrewit.Screw;
+import com.unscrewit.logic.BufferOverflowException;
 import com.unscrewit.model.Buffer;
 import com.unscrewit.model.ColorMapping;
 import com.unscrewit.model.TargetColor;
 import com.unscrewit.rules.Rules;
-import com.unscrewit.logic.BufferOverflowException;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -19,26 +19,41 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 游戏控制器：处理点击事件并推进核心游戏流程.
- * <p>流程包括命中检测、遮挡判定、目标与缓冲区流转、自动转运、螺丝移除与胜负检查。</p>
+ * Game controller: coordinates core gameplay logic and event handling.
+ *
+ * <p>
+ * This class serves as the main entry point for handling in-game actions such as:
+ * player clicks, target and buffer transitions, automatic screw movement,
+ * and win/lose state checks.
+ * </p>
+ *
+ * <p>
+ * Responsibilities:
+ * <ul>
+ *   <li>Interpret and process user clicks (hit detection, color matching).</li>
+ *   <li>Manage screw transfers between boards, buffer, and targets.</li>
+ *   <li>Handle automatic refill and module-based target color selection.</li>
+ *   <li>Trigger callbacks for win/loss states when conditions are met.</li>
+ * </ul>
+ * </p>
  */
 public final class GameController {
 
-    /** 关卡状态（包含板、目标、缓冲、随机源等）。 */
+    /** Current game state, including boards, targets, buffer, and color pools. */
     private final LevelState state;
 
-    /** 胜利回调。 */
+    /** Callback executed when the player wins. */
     private final Runnable onWin;
 
-    /** 失败回调（缓冲溢出）。 */
+    /** Callback executed when the player loses (e.g., buffer overflow). */
     private final Runnable onFail;
 
     /**
-     * 构造控制器。
+     * Constructs the main game controller.
      *
-     * @param state 关卡状态。
-     * @param onWin 胜利时回调。
-     * @param onFail 失败时回调。
+     * @param state   current level state
+     * @param onWin   callback invoked upon victory
+     * @param onFail  callback invoked upon defeat (e.g., buffer overflow)
      */
     public GameController(final LevelState state, final Runnable onWin, final Runnable onFail) {
         this.state = state;
@@ -47,18 +62,24 @@ public final class GameController {
     }
 
     /**
-     * 处理一次点击（由画布传入像素坐标）。
+     * Handles a single click event based on the provided screen coordinate.
      *
-     * @param p 点击点。
+     * <p>
+     * This method identifies the topmost visible screw at the click position,
+     * validates visibility (must be >50% visible), determines its color mapping,
+     * and attempts to move it either to the target area or the buffer queue.
+     * </p>
+     *
+     * @param p the click position on screen
      */
     public void handleClick(final Point p) {
-        // 命中检测：取最上层的被点中的螺丝。
+        // Step 1: Identify topmost screw under the cursor
         final Screw s = findTopmostScrewAt(p);
         if (s == null) {
             return;
         }
 
-        // 遮挡判定：小于 50% 遮挡才可点击。
+        // Step 2: Check visibility — screw must be at least 50% exposed
         final int radius = Screw.size() / 2;
         final Board holder = state.findHolder(s);
         final List<Rectangle> covers = state.coveringRectsFor(holder);
@@ -68,42 +89,44 @@ public final class GameController {
             return;
         }
 
-        // 逻辑色。
+        // Step 3: Determine logical color
         final TargetColor logicColor = ColorMapping.toTargetColor(s.color);
 
-        // 放入目标或缓冲。
+        // Step 4: Attempt to place the screw
         final boolean placedToTarget = state.targets().tryPlace(logicColor);
         if (placedToTarget) {
-            // 从板面移除该螺丝。
-            state.removeScrew(s);
+    
+            state.removeScrew(s); // Remove from board
 
-            // 自动从缓冲向目标转运（如果有可放入的）。
-            drainBufferToTargets();
+            drainBufferToTargets(); // Always process buffered screws first
 
-            // 目标满三则刷新为新色（6.1：采用模块池驱动的选色策略）。
-            refreshTargetsIfNeeded();
+            refreshTargetsIfNeeded(); // Update target colors if necessary
 
-            // 检查胜利。
             if (state.allCleared()) {
                 onWin.run();
             }
         } else {
-            // 放入缓冲；若溢出则失败。
+            // Try to push into buffer; may throw overflow exception
             try {
                 state.buffer().push(logicColor);
             } catch (BufferOverflowException ex) {
                 onFail.run();
                 return;
             }
-            // 尝试从缓冲继续转运（可能刚好能放）。
+            // Step 5: Handle automatic transfers and win checks
             drainBufferToTargets();
-            // 如果因为转运导致某侧满三，则刷新。
             refreshTargetsIfNeeded();
         }
     }
 
     /**
-     * 在需要时刷新目标颜色（当某侧满三）。本实现为 6.1 版本：使用主体区“三连小模块池”驱动目标色选择，优先从“可点击且有模块”的颜色中选；同一轮尽量避免双槽同色（除非候选仅剩一种）。 
+     * Refreshes target colors when both or one target is full.
+     *
+     * <p>
+     * Implements the “three-in-a-row module-driven color selection” strategy:
+     * when a target is full, new target colors are selected from available modules
+     * and the current clickable color set. It avoids color repetition where possible.
+     * </p>
      */
     private void refreshTargetsIfNeeded() {
         final boolean leftFull = state.targets().leftFull();
@@ -112,22 +135,23 @@ public final class GameController {
             return;
         }
 
-        // 即时构建模块池与可点击颜色集合。
+        // Build pools of module colors and clickable candidates
         final Map<TargetColor, Integer> modulePool = buildModulePoolFromBoards();
         final Set<TargetColor> clickable = computeClickableColors();
 
         TargetColor newLeft = state.targets().leftColor();
         TargetColor newRight = state.targets().rightColor();
 
+        // Both targets full — refresh both sides
         if (leftFull && rightFull) {
-            // 同一轮刷新两个槽：先选一个，再临时占用该色一个模块名额后选第二个，尽量避免同色。
+            // Prefer module-driven color selection, fallback to random pick
             TargetColor c0 = pickTargetColorByModule(modulePool, clickable, null);
             if (c0 != null) {
                 modulePool.put(c0, Math.max(0, modulePool.getOrDefault(c0, 0) - 1));
             }
             TargetColor c1 = pickTargetColorByModule(modulePool, clickable, c0);
             if (c1 == null) {
-                // 模块池可能只有一种颜色，允许同色。
+                // allow reuse if only one color remains
                 c1 = c0 != null ? c0 : pickTargetColorByModule(modulePool, clickable, null);
             }
             if (c0 != null) {
@@ -140,43 +164,64 @@ public final class GameController {
             } else {
                 newRight = pickNewColorExcluding(newLeft);
             }
+
+        // Only left full
         } else if (leftFull) {
-            TargetColor c = pickTargetColorByModule(modulePool, clickable, state.targets().rightColor());
+            TargetColor c = pickTargetColorByModule(
+                modulePool, 
+                clickable, 
+                state.targets().rightColor());
             if (c == null) {
                 c = pickNewColorExcluding(state.targets().rightColor());
             }
-            newLeft = c;
-        } else { // rightFull
-            TargetColor c = pickTargetColorByModule(modulePool, clickable, state.targets().leftColor());
+            newLeft = c; 
+        }
+
+        // Only right full
+        else { 
+            TargetColor c = pickTargetColorByModule(
+                modulePool, 
+                clickable, 
+                state.targets().leftColor());
             if (c == null) {
                 c = pickNewColorExcluding(state.targets().leftColor());
             }
             newRight = c;
         }
 
+        // Apply color refresh
         state.targets().refreshColors(leftFull, newLeft, rightFull, newRight);
     }
 
     /**
-     * 从缓冲区尽可能将元素转运到目标槽。若队首颜色可放入目标则弹出并放入；一旦队首不可放入则停止（保持原有“队列语义”）。 
+     * Transfers any queued screws from the buffer to the target area if possible.
+     *
+     * <p>
+     * Continuously pops elements from the buffer queue and attempts to place
+     * each screw’s color into a valid target slot. If a placement fails, the color
+     * is reinserted back into the buffer and the transfer process stops.
+     * </p>
      */
     private void drainBufferToTargets() {
         final Buffer buffer = state.buffer();
+        
         while (true) {
-            // 取队首（Buffer 未提供 peek，这里用 pop 后决定是否放回）。
+            // Pop the head of the buffer (no peek available; decide later if reinsertion is needed)
             final TargetColor c = buffer.pop();
             if (c == null) {
                 return;
             }
+
+            // Try placing into a target
             if (state.targets().tryPlace(c)) {
-                // 放入成功：继续尝试下一项。
+                // Successfully placed — continue to next one
                 continue;
             } else {
-                // 放不进去：把元素放回队尾并停止。
+                // Failed to place — put it back to the buffer and stop
                 try {
                     buffer.push(c);
                 } catch (BufferOverflowException ignore) {
-                    // 理论不会发生：我们刚刚从该缓冲弹出了一个元素。
+                    // This should never happen, since we just popped one element earlier.
                 }
                 return;
             }
@@ -184,18 +229,28 @@ public final class GameController {
     }
 
     /**
-     * 构建“颜色 → 可消三连模块数量”的映射；仅统计主体区在场螺丝，按 3 为单位向下取整。 
+     * Builds a mapping (“module pool”) between target colors and the number
+     * of complete modules available across all boards.
      *
-     * @return 模块池映射。
+     * <p>
+     * Each color is counted based on its appearance among all screws on
+     * active boards. Every three screws of the same color form one module.
+     * </p>
+     *
+     * @return a map of {@link TargetColor} to module counts
      */
     private Map<TargetColor, Integer> buildModulePoolFromBoards() {
         final Map<TargetColor, Integer> count = new HashMap<>();
+        
+        // Count occurrences of each color from all boards
         for (Board b : state.boards()) {
             for (Screw s : b.screws) {
                 final TargetColor c = ColorMapping.toTargetColor(s.color);
                 count.merge(c, 1, Integer::sum);
             }
         }
+
+        // Convert raw screw counts into module counts (3 screws = 1 module)
         final Map<TargetColor, Integer> pool = new HashMap<>();
         for (Map.Entry<TargetColor, Integer> e : count.entrySet()) {
             final int modules = e.getValue() / 3;
@@ -207,9 +262,15 @@ public final class GameController {
     }
 
     /**
-     * 计算当前“可点击”的逻辑颜色集合（与点击命中口径一致）。 
+     * Computes the set of currently clickable colors based on screw visibility.
      *
-     * @return 可点击颜色集合。
+     * <p>
+     * For each screw on the board, this function checks if it is visible enough
+     * (coverage below the threshold) and converts its physical color into a
+     * logical target color. All visible colors are collected and returned.
+     * </p>
+     *
+     * @return a set of {@link TargetColor} representing all currently clickable colors
      */
     private Set<TargetColor> computeClickableColors() {
         final Set<TargetColor> result = new HashSet<>();
@@ -228,12 +289,18 @@ public final class GameController {
     }
 
     /**
-     * 从模块池中选择目标色：优先“可点击 ∩ 模块数>0”，否则“模块数>0”；尽量回避 excluded。 
+     * Selects a target color from the module pool based on clickability and module count.
      *
-     * @param modulePool 模块池。
-     * @param clickable 可点击颜色集合。
-     * @param excluded 需要尽量回避的颜色（可为 null）。
-     * @return 选中的颜色或 {@code null}。
+     * <p>
+     * The method prioritizes colors that are both clickable and have higher module counts.
+     * If no clickable color fits, it falls back to other available module colors.
+     * Optionally, one color can be excluded to avoid repetition.
+     * </p>
+     *
+     * @param modulePool the color-to-module count map
+     * @param clickable  the set of currently clickable colors
+     * @param excluded   an optional color to exclude (can be {@code null})
+     * @return the selected {@link TargetColor}, or {@code null} if no suitable color found
      */
     private TargetColor pickTargetColorByModule(
             final Map<TargetColor, Integer> modulePool,
@@ -249,10 +316,11 @@ public final class GameController {
             if (m <= 0) {
                 continue;
             }
+            // Skip the excluded color if defined
             if (excluded != null && c == excluded) {
-                // 暂避该色，若最终无候选再考虑回退。
                 continue;
             }
+            // Classify by clickability
             if (clickable.contains(c)) {
                 p1.add(c);
             } else {
@@ -260,6 +328,7 @@ public final class GameController {
             }
         }
 
+        // Sort colors by module count (descending), then by enum order
         final Comparator<TargetColor> cmp = Comparator
                 .comparingInt((TargetColor c) -> modulePool.getOrDefault(c, 0))
                 .reversed()
@@ -268,6 +337,8 @@ public final class GameController {
         p1.sort(cmp);
         p2.sort(cmp);
 
+
+        // Priority: clickable list first
         if (!p1.isEmpty()) {
             return p1.get(0);
         }
@@ -281,13 +352,20 @@ public final class GameController {
     }
 
     /**
-     * 在所有板中查找点击位置命中的最上层螺丝。 
+     * Finds the topmost screw at a given screen coordinate across all boards.
      *
-     * @param p 点击坐标。
-     * @return 命中的螺丝；若未命中则为 {@code null}。
+     * <p>
+     * This method iterates through all boards in reverse order (topmost first)
+     * and checks each screw to see if the click point lies within its hitbox.
+     * The first matching screw encountered is returned as the topmost one.
+     * </p>
+     *
+     * @param p the point clicked on screen
+     * @return the topmost {@link Screw} under the click position, or {@code null} if none is hit
      */
     private Screw findTopmostScrewAt(final Point p) {
-        // 假定 LevelState.boards() 自下而上排序，则自后向前遍历即可得到最上层命中项。
+        // Boards are assumed to be ordered front-to-back, 
+        // so iterate in reverse to find the top layer first.
         final List<Board> boards = state.boards();
         for (int i = boards.size() - 1; i >= 0; i--) {
             final Board b = boards.get(i);
@@ -302,14 +380,20 @@ public final class GameController {
     }
 
     /**
-     * 随机挑选一个不等于排除色的目标颜色（保留旧逻辑作为兜底）。 
+     * Randomly selects a new target color, excluding the specified one.
+     * Used when refreshing or reassigning target colors. Ensures that
+     * the newly picked color is different from the excluded one, preserving
+     * color diversity while maintaining consistent game logic.
      *
-     * @param exclude 需要排除的颜色。
-     * @return 新的目标颜色。
+     * @param exclude the color to exclude from random selection (may be {@code null})
+     * @return a randomly chosen {@link TargetColor} that differs from {@code exclude}
      */
     private TargetColor pickNewColorExcluding(final TargetColor exclude) {
         final TargetColor[] vals = TargetColor.values();
         TargetColor candidate = vals[state.random().nextInt(vals.length)];
+        
+
+        // If the random pick matches the excluded color, pick the next one cyclically
         if (candidate == exclude) {
             candidate = vals[(candidate.ordinal() + 1) % vals.length];
         }
