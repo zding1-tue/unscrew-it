@@ -17,3 +17,6 @@ Basic Rules
 4. If not, it goes into the buffer (max 4 slots). If the buffer overflows → Game Over.
 5. When a target slot fills with three screws of the same color, it clears automatically and refreshes with a new color.
 6. The game is won when all screws are cleared and the buffer is empty.
+
+Github link
+https://github.com/zding1-tue/unscrew-it
