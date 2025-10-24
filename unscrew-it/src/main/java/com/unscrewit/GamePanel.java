@@ -7,6 +7,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.Random;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 
 /**
  * 游戏主画布: 负责关卡生成、交互与 UI 渲染.
@@ -38,8 +40,11 @@ public class GamePanel extends JPanel {
     /** 板子数量. */
     private static final int BOARD_COUNT = 7;
 
-    /** 规则文本. */
+    /** 标题文本. */
     private static final String TITLE = "Click visible screws to match the target colors";
+
+    /** 螺丝移动动画时长(毫秒). */
+    private static final int MOVE_DURATION_MS = 260;
 
     /** 随机源. */
     private final Random rand = new Random();
@@ -61,6 +66,12 @@ public class GamePanel extends JPanel {
 
     /** 剩余“模块池”. */
     private final Map<Color, Integer> modulesPool = new HashMap<>();
+
+    /** 正在播放的螺丝移动动画. */
+    private final List<MovingScrew> movingScrews = new ArrayList<>();
+
+    /** 动画定时器. */
+    private final Timer animationTimer;
 
     /** 是否已经初始化. */
     private boolean inited = false;
@@ -93,6 +104,9 @@ public class GamePanel extends JPanel {
                 }
             }
         });
+
+        animationTimer = new Timer(16, e -> onAnimationTick());
+        animationTimer.setCoalesce(true);
     }
 
     /**
@@ -142,6 +156,16 @@ public class GamePanel extends JPanel {
 
         int w = getWidth();
         int h = getHeight();
+
+        GradientPaint bg = new GradientPaint(
+            0f, 0f, new Color(240, 244, 248),
+            0f, h, new Color(226, 233, 240)
+        );
+        java.awt.Paint oldPaint = g2.getPaint();
+        g2.setPaint(bg);
+        g2.fillRect(0, 0, w, h);
+        g2.setPaint(oldPaint);
+
         int topH = h / 4;
         int midH = h / 8;
 
@@ -159,6 +183,8 @@ public class GamePanel extends JPanel {
             List<Board> above = boards.subList(i + 1, boards.size());
             boards.get(i).draw(g2, above);
         }
+
+        drawMovingScrews(g2);
 
         // 结束遮罩与按钮.
         if (gameOver) {
@@ -184,6 +210,10 @@ public class GamePanel extends JPanel {
         targetUsed[0] = targetUsed[1] = 0;
         piecesPool.clear();
         modulesPool.clear();
+        movingScrews.clear();
+        if (animationTimer.isRunning()) {
+            animationTimer.stop();
+        }
 
         // 1) 生成板子与螺丝位置(先不着色).
         for (int i = 0; i < BOARD_COUNT; i++) {
@@ -288,42 +318,34 @@ public class GamePanel extends JPanel {
         Color c = s.color;
         from.removeScrew(s);
 
-        if (tryFillTarget(c)) {
-            afterBoardUpdate(from);
-            repaint();
+        int width = Math.max(getWidth(), 1);
+        int height = Math.max(getHeight(), 1);
+
+        int targetIndex = findAvailableTarget(c);
+        if (targetIndex >= 0) {
+            int slotIndex = targetUsed[targetIndex];
+            Point end = computeTargetSlotCenter(targetIndex, slotIndex, width, height);
+            startMovingScrew(c, s.x, s.y, end.x, end.y, () -> {
+                applyTargetFill(targetIndex, c);
+                afterBoardUpdate(from);
+                repaint();
+            });
             return;
         }
 
         if (buffer.size() < BUFFER_SIZE) {
-            buffer.add(s);
-            autoTransfer();
-            afterBoardUpdate(from);
-            repaint();
+            int slotIndex = buffer.size();
+            Point end = computeBufferSlotCenter(slotIndex, width, height);
+            startMovingScrew(c, s.x, s.y, end.x, end.y, () -> {
+                buffer.add(s);
+                autoTransfer();
+                afterBoardUpdate(from);
+                repaint();
+            });
         } else {
+            afterBoardUpdate(from);
             lose();
         }
-    }
-
-    /** 目标填充一颗指定颜色. */
-    private boolean tryFillTarget(final Color c) {
-        for (int t = 0; t < 2; t++) {
-            if (sameColor(c, targetColors[t]) && targetUsed[t] < TARGET_SLOTS) {
-                targetUsed[t]++;
-                decPiece(c);
-                if (targetUsed[t] == TARGET_SLOTS) {
-                    targetUsed[t] = 0;
-                    decModule(c);
-                    targetColors[t] = pickTargetColor(targetColors[1 - t]);
-                    if (targetColors[t] == null) {
-                        targetColors[t] = targetColors[1 - t];
-                    }
-                }
-                autoTransfer();
-                checkWin();
-                return true;
-            }
-        }
-        return false;
     }
 
     /** 自动从缓冲向目标搬运, 直到不能再搬为止. */
@@ -407,79 +429,175 @@ public class GamePanel extends JPanel {
     /** 绘制顶部目标条. */
     private void drawTargets(final Graphics2D g2, final int w, final int topH) {
         int pad = 24;
-        int barW = (w - pad * 3) / 2;
+        int cardW = (w - pad * 3) / 2;
         int barH = 44;
-        int y = 56;
+        int y = 54;
 
         for (int t = 0; t < 2; t++) {
-            int x = pad + t * (barW + pad);
-            // 背板.
-            g2.setColor(new Color(230, 233, 236));
-            g2.fillRoundRect(x - 6, y - 6, barW + 12, barH + 12, 12, 12);
+            int x = pad + t * (cardW + pad);
+            int cardX = x - 10;
+            int cardY = y - 18;
+            int cardWidth = cardW + 20;
+            int cardHeight = barH + 52;
 
-            // 彩条.
-            g2.setColor(targetColors[t] != null ? targetColors[t] : Color.LIGHT_GRAY);
-            g2.fillRoundRect(x, y, barW, barH, 10, 10);
-            g2.setColor(new Color(50, 50, 70));
-            g2.setStroke(new BasicStroke(2f));
-            g2.drawRoundRect(x, y, barW, barH, 10, 10);
+            // 阴影.
+            g2.setColor(new Color(0, 0, 0, 28));
+            g2.fillRoundRect(cardX + 4, cardY + 8, cardWidth, cardHeight, 18, 18);
+
+            // 卡片主体.
+            GradientPaint cardPaint = new GradientPaint(
+                cardX, cardY, new Color(255, 255, 255, 235),
+                cardX, cardY + cardHeight, new Color(244, 248, 252, 235)
+            );
+            java.awt.Paint prevPaint = g2.getPaint();
+            g2.setPaint(cardPaint);
+            g2.fillRoundRect(cardX, cardY, cardWidth, cardHeight, 18, 18);
+            g2.setPaint(prevPaint);
+            g2.setColor(new Color(205, 210, 220));
+            g2.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 18, 18);
+
+            // 标题.
+            g2.setFont(getFont().deriveFont(Font.BOLD, 13f));
+            g2.setColor(new Color(85, 90, 98));
+            g2.drawString("TARGET " + (t + 1), cardX + 18, cardY + 26);
+
+            // 彩条区域.
+            int barX = x;
+            int barY = cardY + 32;
+            Color base = targetColors[t] != null ? targetColors[t] : new Color(190, 198, 206);
+            GradientPaint barPaint = new GradientPaint(
+                barX, barY, lightenColor(base, 0.35f),
+                barX, barY + barH, darkenColor(base, 0.18f)
+            );
+            prevPaint = g2.getPaint();
+            g2.setPaint(barPaint);
+            g2.fillRoundRect(barX, barY, cardW, barH, 12, 12);
+            g2.setPaint(prevPaint);
+            g2.setColor(new Color(60, 65, 80));
+            g2.setStroke(new BasicStroke(1.6f));
+            g2.drawRoundRect(barX, barY, cardW, barH, 12, 12);
 
             // 三个槽位圆点.
             int dotR = 16;
-            int gap = (barW - dotR * TARGET_SLOTS) / (TARGET_SLOTS + 1);
+            int gap = (cardW - dotR * TARGET_SLOTS) / (TARGET_SLOTS + 1);
             for (int i = 0; i < TARGET_SLOTS; i++) {
-                int cx = x + gap * (i + 1) + dotR * i;
-                int cy = y + (barH - dotR) / 2;
+                int cx = barX + gap * (i + 1) + dotR * i;
+                int cy = barY + (barH - dotR) / 2;
                 boolean filled = i < targetUsed[t];
                 if (filled) {
-                    g2.setColor(new Color(245, 245, 245));
+                    g2.setColor(new Color(255, 255, 255, 210));
                     g2.fillOval(cx, cy, dotR, dotR);
+                    g2.setColor(new Color(50, 50, 70, 120));
+                    g2.drawOval(cx, cy, dotR, dotR);
                 } else {
-                    g2.setColor(new Color(240, 240, 240, 180));
+                    g2.setColor(new Color(245, 246, 248, 180));
                     g2.fillOval(cx, cy, dotR, dotR);
-                    g2.setColor(new Color(220, 220, 220));
+                    g2.setColor(new Color(210, 214, 220));
                     g2.drawOval(cx, cy, dotR, dotR);
                 }
             }
+
+            // 状态文本.
+            String progress = targetUsed[t] + "/" + TARGET_SLOTS + " slots";
+            g2.setFont(getFont().deriveFont(12f));
+            g2.setColor(new Color(110, 115, 125));
+            g2.drawString(progress, barX, barY + barH + 20);
         }
     }
 
     /** 绘制底部缓冲区. */
     private void drawBuffer(final Graphics2D g2, final int w, final int topH, final int midH) {
         int pad = 24;
-        int slotW = (w - pad * 5) / 4;
+        int slotW = (w - pad * (BUFFER_SIZE + 1)) / BUFFER_SIZE;
         int slotH = 48;
         int y = getHeight() - slotH - 28;
 
-        // 外框.
-        g2.setColor(new Color(230, 233, 236));
-        g2.fillRoundRect(pad - 8, y - 10, w - pad * 2 + 16, slotH + 20, 12, 12);
-        g2.setColor(new Color(90, 96, 102));
-        g2.drawRoundRect(pad - 8, y - 10, w - pad * 2 + 16, slotH + 20, 12, 12);
+        int cardX = pad - 12;
+        int cardWidth = w - (pad - 12) * 2;
+        int cardY = y - 32;
+        int cardHeight = slotH + 70;
 
-        for (int i = 0; i < 4; i++) {
+        // 阴影与卡片.
+        g2.setColor(new Color(0, 0, 0, 24));
+        g2.fillRoundRect(cardX + 4, cardY + 8, cardWidth, cardHeight, 20, 20);
+        GradientPaint cardPaint = new GradientPaint(
+            cardX, cardY, new Color(255, 255, 255, 235),
+            cardX, cardY + cardHeight, new Color(240, 245, 250, 235)
+        );
+        java.awt.Paint prevPaint = g2.getPaint();
+        g2.setPaint(cardPaint);
+        g2.fillRoundRect(cardX, cardY, cardWidth, cardHeight, 20, 20);
+        g2.setPaint(prevPaint);
+        g2.setColor(new Color(205, 210, 220));
+        g2.drawRoundRect(cardX, cardY, cardWidth, cardHeight, 20, 20);
+
+        // 标题与状态.
+        g2.setFont(getFont().deriveFont(Font.BOLD, 14f));
+        g2.setColor(new Color(85, 90, 98));
+        g2.drawString("BUFFER BAY", cardX + 20, cardY + 28);
+
+        String usage = buffer.size() + "/" + BUFFER_SIZE + " slots used";
+        g2.setFont(getFont().deriveFont(12f));
+        g2.setColor(new Color(110, 115, 125));
+        int usageWidth = g2.getFontMetrics().stringWidth(usage);
+        g2.drawString(usage, cardX + cardWidth - usageWidth - 20, cardY + 28);
+
+        // 缓冲槽位.
+        for (int i = 0; i < BUFFER_SIZE; i++) {
             int x = pad + i * (slotW + pad);
-            g2.setColor(new Color(250, 250, 250));
-            g2.fillRoundRect(x, y, slotW, slotH, 10, 10);
-            g2.setColor(new Color(190, 195, 200));
-            g2.drawRoundRect(x, y, slotW, slotH, 10, 10);
+            GradientPaint slotPaint = new GradientPaint(
+                x, y, new Color(252, 253, 255, 235),
+                x, y + slotH, new Color(234, 239, 245, 235)
+            );
+            prevPaint = g2.getPaint();
+            g2.setPaint(slotPaint);
+            g2.fillRoundRect(x, y, slotW, slotH, 12, 12);
+            g2.setPaint(prevPaint);
+            g2.setColor(new Color(190, 195, 204));
+            g2.drawRoundRect(x, y, slotW, slotH, 12, 12);
 
             if (i < buffer.size()) {
-                Screw s = buffer.get(i);
+                Screw screw = buffer.get(i);
                 int r = Screw.size();
                 int cx = x + slotW / 2 - r / 2;
                 int cy = y + slotH / 2 - r / 2;
-                Color c = s.color != null ? s.color : Color.GRAY;
-                g2.setColor(c);
+                Color c = screw.color != null ? screw.color : Color.GRAY;
+                GradientPaint screwPaint = new GradientPaint(
+                    cx, cy, lightenColor(c, 0.28f),
+                    cx, cy + r, darkenColor(c, 0.22f)
+                );
+                prevPaint = g2.getPaint();
+                g2.setPaint(screwPaint);
                 g2.fillOval(cx, cy, r, r);
-                g2.setColor(new Color(30, 30, 30));
+                g2.setPaint(prevPaint);
+                g2.setColor(new Color(30, 35, 40, 180));
                 g2.drawOval(cx, cy, r, r);
             }
         }
+    }
 
-        g2.setColor(new Color(70, 70, 70));
-        g2.setFont(getFont().deriveFont(12f));
-        g2.drawString("Buffer " + buffer.size() + "/" + BUFFER_SIZE, w - 130, y + slotH + 18);
+    /** 绘制运动中的螺丝动画. */
+    private void drawMovingScrews(final Graphics2D g2) {
+        if (movingScrews.isEmpty()) {
+            return;
+        }
+        java.awt.Paint prev = g2.getPaint();
+        for (MovingScrew ms : movingScrews) {
+            int size = Screw.size();
+            int radius = size / 2;
+            int x = Math.round(ms.currentX) - radius;
+            int y = Math.round(ms.currentY) - radius;
+            GradientPaint paint = new GradientPaint(
+                x, y, lightenColor(ms.color, 0.28f),
+                x, y + size, darkenColor(ms.color, 0.24f)
+            );
+            g2.setPaint(paint);
+            g2.fillOval(x, y, size, size);
+            g2.setPaint(prev);
+            g2.setColor(new Color(30, 35, 40, 180));
+            g2.drawOval(x, y, size, size);
+        }
+        g2.setPaint(prev);
     }
 
     /** 绘制结束遮罩与按钮. */
@@ -557,6 +675,118 @@ public class GamePanel extends JPanel {
        工具与池操作
        =========================== */
 
+    /** 提亮颜色. */
+    private Color lightenColor(final Color color, final float ratio) {
+        Color base = color != null ? color : new Color(200, 205, 212);
+        float r = Math.max(0f, Math.min(1f, ratio));
+        int red = Math.min(255, Math.round(base.getRed() + (255 - base.getRed()) * r));
+        int green = Math.min(255, Math.round(base.getGreen() + (255 - base.getGreen()) * r));
+        int blue = Math.min(255, Math.round(base.getBlue() + (255 - base.getBlue()) * r));
+        return new Color(red, green, blue);
+    }
+
+    /** 变暗颜色. */
+    private Color darkenColor(final Color color, final float ratio) {
+        Color base = color != null ? color : new Color(180, 185, 192);
+        float r = Math.max(0f, Math.min(1f, ratio));
+        int red = Math.max(0, Math.round(base.getRed() * (1f - r)));
+        int green = Math.max(0, Math.round(base.getGreen() * (1f - r)));
+        int blue = Math.max(0, Math.round(base.getBlue() * (1f - r)));
+        return new Color(red, green, blue);
+    }
+
+    /** 查找可用目标槽位. */
+    private int findAvailableTarget(final Color color) {
+        for (int t = 0; t < 2; t++) {
+            if (sameColor(color, targetColors[t]) && targetUsed[t] < TARGET_SLOTS) {
+                return t;
+            }
+        }
+        return -1;
+    }
+
+    /** 应用目标槽填充并驱动后续逻辑. */
+    private void applyTargetFill(final int targetIndex, final Color color) {
+        targetUsed[targetIndex]++;
+        decPiece(color);
+        if (targetUsed[targetIndex] == TARGET_SLOTS) {
+            targetUsed[targetIndex] = 0;
+            decModule(color);
+            targetColors[targetIndex] = pickTargetColor(targetColors[1 - targetIndex]);
+            if (targetColors[targetIndex] == null) {
+                targetColors[targetIndex] = targetColors[1 - targetIndex];
+            }
+        }
+        autoTransfer();
+        checkWin();
+    }
+
+    /** 计算目标槽中心位置. */
+    private Point computeTargetSlotCenter(final int targetIndex, final int slotIndex, final int width, final int height) {
+        int pad = 24;
+        int cardW = (width - pad * 3) / 2;
+        int barH = 44;
+        int y = 54;
+        int barX = pad + targetIndex * (cardW + pad);
+        int cardY = y - 18;
+        int barY = cardY + 32;
+        int dotR = 16;
+        int gap = (cardW - dotR * TARGET_SLOTS) / (TARGET_SLOTS + 1);
+        int topLeftX = barX + gap * (slotIndex + 1) + dotR * slotIndex;
+        int topLeftY = barY + (barH - dotR) / 2;
+        return new Point(topLeftX + dotR / 2, topLeftY + dotR / 2);
+    }
+
+    /** 计算缓冲槽中心位置. */
+    private Point computeBufferSlotCenter(final int slotIndex, final int width, final int height) {
+        int pad = 24;
+        int slotW = (width - pad * (BUFFER_SIZE + 1)) / BUFFER_SIZE;
+        int slotH = 48;
+        int y = height - slotH - 28;
+        int x = pad + slotIndex * (slotW + pad);
+        return new Point(x + slotW / 2, y + slotH / 2);
+    }
+
+    /** 启动一段螺丝移动动画. */
+    private void startMovingScrew(final Color color, final float startX, final float startY,
+        final float endX, final float endY, final Runnable onComplete) {
+        MovingScrew ms = new MovingScrew(color, startX, startY, endX, endY, MOVE_DURATION_MS, onComplete);
+        movingScrews.add(ms);
+        if (!animationTimer.isRunning()) {
+            animationTimer.start();
+        }
+        repaint();
+    }
+
+    /** 动画时钟回调. */
+    private void onAnimationTick() {
+        if (movingScrews.isEmpty()) {
+            animationTimer.stop();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Iterator<MovingScrew> it = movingScrews.iterator();
+        while (it.hasNext()) {
+            MovingScrew ms = it.next();
+            ms.update(now);
+            if (ms.isFinished()) {
+                it.remove();
+                ms.finish();
+            }
+        }
+        if (movingScrews.isEmpty()) {
+            animationTimer.stop();
+        }
+        repaint();
+    }
+
+    /** 缓动函数 (ease-out cubic). */
+    private static double easeOutCubic(final double t) {
+        double clamped = Math.max(0.0, Math.min(1.0, t));
+        double inv = clamped - 1.0;
+        return inv * inv * inv + 1.0;
+    }
+
     /** 颜色相等判定(处理 null). */
     private boolean sameColor(final Color a, final Color b) {
         if (a == b) {
@@ -577,5 +807,52 @@ public class GamePanel extends JPanel {
     private void decModule(final Color c) {
         int now = Math.max(0, modulesPool.getOrDefault(c, 0) - 1);
         modulesPool.put(c, now);
+    }
+
+    /** 定义单颗螺丝的移动动画状态. */
+    private static final class MovingScrew {
+        private final Color color;
+        private final float startX;
+        private final float startY;
+        private final float endX;
+        private final float endY;
+        private final long startTime;
+        private final int durationMs;
+        private final Runnable onComplete;
+
+        private float currentX;
+        private float currentY;
+        private boolean finished;
+
+        private MovingScrew(final Color color, final float startX, final float startY,
+            final float endX, final float endY, final int durationMs, final Runnable onComplete) {
+            this.color = color;
+            this.startX = startX;
+            this.startY = startY;
+            this.endX = endX;
+            this.endY = endY;
+            this.durationMs = Math.max(1, durationMs);
+            this.onComplete = onComplete;
+            this.startTime = System.currentTimeMillis();
+            update(this.startTime);
+        }
+
+        private void update(final long now) {
+            double elapsed = (now - startTime) / (double) durationMs;
+            double eased = easeOutCubic(elapsed);
+            currentX = startX + (float) ((endX - startX) * eased);
+            currentY = startY + (float) ((endY - startY) * eased);
+            finished = elapsed >= 1.0;
+        }
+
+        private boolean isFinished() {
+            return finished;
+        }
+
+        private void finish() {
+            if (onComplete != null) {
+                onComplete.run();
+            }
+        }
     }
 }
