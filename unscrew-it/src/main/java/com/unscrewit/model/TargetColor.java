@@ -1,8 +1,34 @@
 package com.unscrewit.model;
 
 /**
- * Logical color identity for targets.
+ * Logical color identifiers used in the game.
+ *
+ * <p>Each value corresponds one-to-one with a visual color in
+ * {@link com.unscrewit.ColorUtils#COLORS}. The mapping is used
+ * throughout the logic layer for color comparison and validation.</p>
  */
 public enum TargetColor {
-    C0, C1, C2, C3, C4, C5, C6, C7
+    /** Default placeholder color (often represents empty or undefined). */
+    C0, 
+
+    /** Logical color 1. */
+    C1, 
+    
+    /** Logical color 2. */
+    C2, 
+    
+    /** Logical color 3. */
+    C3, 
+    
+    /** Logical color 4. */
+    C4, 
+    
+    /** Logical color 5. */
+    C5, 
+    
+    /** Logical color 6. */
+    C6, 
+    
+    /** Logical color 7. */
+    C7
 }

@@ -4,19 +4,18 @@ import com.unscrewit.rules.Rules;
 
 /**
  * Represents the two target areas at the top of the screen.
- * <p>
- * Each target area corresponds to one logical color and consists of
- * {@link Rules#TARGET_SLOTS_PER_COLOR} slots. When all slots for a target color
- * are filled, that color is considered cleared and should be replaced with a
- * new target color.
- * </p>
+ *
+ * <p>Each target area corresponds to one logical color and contains
+ * {@link Rules#TARGET_SLOTS_PER_COLOR} slots. When all slots of a target
+ * color are filled, that color is considered cleared and should be
+ * replaced with a new one.</p>
  */
 public final class TargetSlots {
 
-    /** The color of the left target. */
+    /** The color of the left target area. */
     private TargetColor leftColor;
 
-    /** The color of the right target. */
+    /** The color of the right target area. */
     private TargetColor rightColor;
 
     /** The number of filled slots for the left target. */
@@ -29,7 +28,7 @@ public final class TargetSlots {
      * Creates a new {@code TargetSlots} instance with the given initial colors.
      *
      * @param left  the initial color of the left target
-     * @param right the initial color of the right target; should not equal left
+     * @param right the initial color of the right target (should differ from left)
      */
     public TargetSlots(TargetColor left, TargetColor right) {
         this.leftColor = left;
@@ -61,18 +60,18 @@ public final class TargetSlots {
     }
 
     /**
-     * Checks whether the left target is full.
+     * Checks whether the left target has reached its full slot capacity.
      *
-     * @return {@code true} if the left target has reached its slot capacity
+     * @return {@code true} if the left target is full; {@code false} otherwise
      */
     public boolean leftFull() {
         return leftCount >= Rules.TARGET_SLOTS_PER_COLOR;
     }
 
     /**
-     * Checks whether the right target is full.
+     * Checks whether the right target has reached its full slot capacity.
      *
-     * @return {@code true} if the right target has reached its slot capacity
+     * @return {@code true} if the right target is full; {@code false} otherwise
      */
     public boolean rightFull() {
         return rightCount >= Rules.TARGET_SLOTS_PER_COLOR;
@@ -99,7 +98,7 @@ public final class TargetSlots {
     }
 
     /**
-     * Returns the color of the left target.
+     * Returns the current color of the left target.
      *
      * @return the left target color
      */
@@ -108,7 +107,7 @@ public final class TargetSlots {
     }
 
     /**
-     * Returns the color of the right target.
+     * Returns the current color of the right target.
      *
      * @return the right target color
      */
@@ -117,18 +116,18 @@ public final class TargetSlots {
     }
 
     /**
-     * Returns the current fill count of the left target.
+     * Returns how many screws have been placed in the left target.
      *
-     * @return the number of screws currently placed in the left target
+     * @return the left target fill count
      */
     public int leftCount() {
         return leftCount;
     }
 
     /**
-     * Returns the current fill count of the right target.
+     * Returns how many screws have been placed in the right target.
      *
-     * @return the number of screws currently placed in the right target
+     * @return the right target fill count
      */
     public int rightCount() {
         return rightCount;

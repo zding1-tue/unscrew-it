@@ -14,7 +14,7 @@ import java.util.List;
 public final class Visibility {
 
     private Visibility() {
-        // Utility class.
+        // Utility class: prevent instantiation.
     }
 
     /**
@@ -40,10 +40,13 @@ public final class Visibility {
     public static boolean isClickable(int x, int y, int radius,
             List<Rectangle> coveringRects, double clickableThresholdRatio) {
 
+        // Define the screw’s bounding box      
         Rectangle boundingBox = new Rectangle(x - radius, y - radius,
                 radius * 2, radius * 2);
 
         long coveredArea = 0;
+        
+        // Calculate the total overlapping area with upper boards
         for (Rectangle rect : coveringRects) {
             Rectangle intersection = boundingBox.intersection(rect);
             if (!intersection.isEmpty()) {
@@ -51,10 +54,14 @@ public final class Visibility {
             }
         }
 
+        // Total screw area
         long totalArea = (long) boundingBox.width * boundingBox.height;
+        
+        // Compute ratio of visible area to total area
         double coverageRatio = totalArea == 0 ? 1.0
                 : (coveredArea * 1.0 / totalArea);
 
+        // The screw is clickable if less area is covered than the allowed threshold        
         return coverageRatio < clickableThresholdRatio;
     }
 }
